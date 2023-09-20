@@ -1,0 +1,9 @@
+numpy
+torch
+torchtext
+transformers
+jax<=0.3.16
+jaxlib<=0.3.24 # modified from 0.3.16
+torchtext==0.6
+datasets
+venv
