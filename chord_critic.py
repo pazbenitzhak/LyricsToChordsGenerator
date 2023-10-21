@@ -5,7 +5,7 @@ from chord_tokenizer import NOTE_TO_TOKEN
 # from pychord.constants.scales import RELATIVE_KEY_DICT
 
 
-class ScaleMatchCriteria(object):
+class ChordsMatchCriteria(object):
     def __init__(self, scale, chords, cp):
         self.scale = scale
         self.chords = chords
@@ -15,15 +15,23 @@ class ScaleMatchCriteria(object):
     def calc_score(self):
         raise NotImplementedError
 
-
-class DiatomicMatchCriteria(ScaleMatchCriteria):
+class DiatomicMatchCriteria(ChordsMatchCriteria):
     def calc_score(self):
         diatonic_roles = [self.cp.analyse_diatonic(c, self.scale) for c in self.chords]
         matches_count = len([r for r in diatonic_roles if r])
         score = matches_count / len(self.chords)
         return score
+    
+class BorrowedChordsMatchCriteria(ChordsMatchCriteria):
+    def calc_score(self):
+        diatonic_roles = [self.cp.analyse_all(c, self.scale) for c in self.chords]
+        matched_modes = [r for r in diatonic_roles
+                         if (r[1], self.scale.key.mode) in [('major', 'minor'), ('minor', 'major')]]
+        matches_count = len(matched_modes)
+        score = matches_count / len(self.chords)
+        return score
 
-class FirstChordMatchCriteria(ScaleMatchCriteria):
+class FirstChordMatchCriteria(ChordsMatchCriteria):
     def calc_score(self):
         results = self.cp.analyse_diatonic(self.chords[0], self.scale)
         if results:  # diatonic
@@ -34,7 +42,7 @@ class FirstChordMatchCriteria(ScaleMatchCriteria):
                 return 0.5
         return 0
     
-class LastChordMatchCriteria(ScaleMatchCriteria):
+class LastChordMatchCriteria(ChordsMatchCriteria):
     def calc_score(self):
         results = self.cp.analyse_diatonic(self.chords[-1], self.scale)
         if results:  # diatonic
@@ -43,48 +51,90 @@ class LastChordMatchCriteria(ScaleMatchCriteria):
                 return 1
         return 0
 
-class ChordsProgressionsCoverageCriteria(ScaleMatchCriteria):
-    CHORDS_PROGRESSIONS = []
-    
-    def calc_score(self):
-        # results = self.cp.analyse_diatonic(self.chords[-1], self.scale)
-        # if results:  # diatonic
-            # function = results[0][0].root  # just show roman notation
-            # if function == 'I':
-                # return 1
-        return 0
-    
-    
-class ChordsProgressionsCoverageCriteria(ChordsProgressionsCoverageCriteria):
+class ChordsProgressionsCoverageCriteria(ChordsMatchCriteria):
+    """
+    Appendix of "7" is not mandatory for match but increases the score
+    """
     MAJOR_CHORDS_PROGRESSIONS = [
-        ('I', 'V', 'VI', 'IV') # 1564
-        ('I', 'IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'VI', 'I', 'V') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'I7', 'IV', 'IV7', 'I', 'I7', 'V', 'IV', 'I', 'I7') # twelve bar variation: Seventh chords
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I', 'V') # twelve bar blues variation
-        ('IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'I', 'VI', 'I' ,'V') # twelve bar blues variation
+        ['I', 'V', 'vi', 'IV'], # 1564
+        ['I', 'IV', 'I', 'V', 'vi', 'I'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'V', 'vi', 'I', 'V'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'V', 'I'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'IV', 'I', 'V', 'I'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'I7', 'IV', 'IV7', 'I', 'I7', 'V', 'IV', 'I', 'I7'], # twelve bar variation: Seventh chords
+        ['I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I', 'V'], # twelve bar blues variation
+        ['IV', 'I', 'V', 'VI', 'I'], # twelve bar blues variation
+        ['I', 'IV', 'I', 'V', 'I', 'vi', 'I' ,'V'], # twelve bar blues variation
     ]
     
-    MINOR_CHORDS_PROGRESSIONS = [
-        ('I', 'VI', 'III', 'VII') # 1564
-
-        ('I', 'IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'VI', 'I', 'V') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'I7', 'IV', 'IV7', 'I', 'I7', 'V', 'IV', 'I', 'I7') # twelve bar variation: Seventh chords
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I', 'V') # twelve bar blues variation
-        ('IV', 'I', 'V', 'VI', 'I') # twelve bar blues variation
-        ('I', 'IV', 'I', 'V', 'I', 'VI', 'I' ,'V') # twelve bar blues variation
-
+    NATURAL_MINOR_CHORDS_PROGRESSIONS = [
+        ['i', 'VI', 'III', 'VII'], # 1564
     ]
+
+    HARMONIC_MINOR_CHORDS_PROGRESSIONS = [
+        ['i7', 'iv7', 'i7', 'VI7', 'v7', 'i7'], # twelve bar blues variation
+    ]
+
+    @classmethod
+    def get_chords_progressions(cls, scale):
+        if scale.key.mode == 'major':
+            return cls.MAJOR_CHORDS_PROGRESSIONS
+        if scale.key.mode == 'minor':
+            if scale.key.submode == 'natural':
+                return cls.NATURAL_MINOR_CHORDS_PROGRESSIONS
+            if scale.key.submode == 'harmonic':
+                return cls.HARMONIC_MINOR_CHORDS_PROGRESSIONS
+
+        # return []
+        raise TypeError('Unknown scale')
+    
+    @classmethod
+    def chords_to_functions(cls, cp, chords, scale):
+        chords_functions = []
+        for chord in chords:
+            f = cp.analyse_diatonic(chord, scale)
+            if not f:
+                chords_functions.append('')
+            else:
+                chords_functions.append(f[0][0].root)
         
-class RepetitionChorusCriteria(ScaleMatchCriteria):
+        return chords_functions
+
+    def calc_score(self):
+        chords_progressions = self.get_chords_progressions(self.scale)
+        functions = self.chords_to_functions(self.cp, self.chords, self.scale)
+
+        best_used_map = self._calc_score_subset(functions, chords_progressions, [False] * len(functions))
+        score = sum(best_used_map) / len(functions)
+        return score
+    
+    def _get_all_occurences_indexes(self, functions, progression):
+        # ext_progressions = [progression] + [progression[-1]] + [progression[0]]
+        if len(progression) > len(functions):
+            return []
+        
+        all_occurences = [i for i in range(len(functions) - len(progression) + 1)
+                          if progression == functions[i : i + len(progression)]]
+        return all_occurences
+    
+    def _calc_score_subset(self, functions, progressions, functions_used_maps):
+        best_used_map = functions_used_maps
+        if len(functions) <= 1:
+            return functions_used_maps
+        
+        for prog in progressions:
+            for occurence_i in self._get_all_occurences_indexes(functions, prog):
+                end_i = occurence_i + len(prog)
+                best_first_map = self._calc_score_subset(functions[:occurence_i + 1], progressions, functions_used_maps[:occurence_i] + [True])
+                best_last_map = self._calc_score_subset(functions[end_i - 1 :], progressions, [True] + functions_used_maps[end_i :])
+                occurrence_used_map = best_first_map + ([True] * (len(prog) - 2)) + best_last_map
+                if sum(occurrence_used_map) > sum(best_used_map):
+                    best_used_map = occurrence_used_map
+        return best_used_map
+                                
+
+class RepetitionChorusCriteria(ChordsMatchCriteria):
     def calc_score(self):
         # results = self.cp.analyse_diatonic(self.chords[-1], self.scale)
         # if results:  # diatonic
@@ -100,7 +150,8 @@ class ScaleMatch(object):
         self.criterias = [
             DiatomicMatchCriteria(scale, chords, cp),
             FirstChordMatchCriteria(scale, chords, cp),
-            LastChordMatchCriteria(scale, chords, cp)
+            LastChordMatchCriteria(scale, chords, cp),
+            ChordsProgressionsCoverageCriteria(scale, chords, cp)
         ]
         self.scale = scale
         self.chords = chords
@@ -185,7 +236,8 @@ class SongsChords(object):
         return best_scale
 
 def test():
-    song = SongsChords('G B C Cm')
+    # song = SongsChords('G B C Cm')
+    song = SongsChords('C G F C G Am F Dm Em Bdim C')
     best_scale = song.find_best_scale()
     print(f'best scale is {best_scale}')
 
