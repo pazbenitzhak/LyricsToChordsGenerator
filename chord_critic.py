@@ -51,10 +51,19 @@ class LastChordMatchCriteria(ChordsMatchCriteria):
                 return 1
         return 0
 
+def find_all_sublist(target: list, pattern: list):
+    if len(pattern) > len(target):
+        return []
+    
+    all_occurences = [i for i in range(len(target) - len(pattern) + 1)
+                        if pattern == target[i : i + len(pattern)]]
+    return all_occurences
+
 class ChordsProgressionsCoverageCriteria(ChordsMatchCriteria):
     """
     Appendix of "7" is not mandatory for match but increases the score
     """
+    # NOTE: Major is in uppercase, minor is in lowercase.
     MAJOR_CHORDS_PROGRESSIONS = [
         ['I', 'V', 'vi', 'IV'], # 1564
         ['I', 'IV', 'I', 'V', 'vi', 'I'], # twelve bar blues variation
@@ -109,14 +118,7 @@ class ChordsProgressionsCoverageCriteria(ChordsMatchCriteria):
         score = sum(best_used_map) / len(functions)
         return score
     
-    def _get_all_occurences_indexes(self, functions, progression):
-        # ext_progressions = [progression] + [progression[-1]] + [progression[0]]
-        if len(progression) > len(functions):
-            return []
-        
-        all_occurences = [i for i in range(len(functions) - len(progression) + 1)
-                          if progression == functions[i : i + len(progression)]]
-        return all_occurences
+
     
     def _calc_score_subset(self, functions, progressions, functions_used_maps):
         best_used_map = functions_used_maps
@@ -124,7 +126,7 @@ class ChordsProgressionsCoverageCriteria(ChordsMatchCriteria):
             return functions_used_maps
         
         for prog in progressions:
-            for occurence_i in self._get_all_occurences_indexes(functions, prog):
+            for occurence_i in find_all_sublist(functions, prog):
                 end_i = occurence_i + len(prog)
                 best_first_map = self._calc_score_subset(functions[:occurence_i + 1], progressions, functions_used_maps[:occurence_i] + [True])
                 best_last_map = self._calc_score_subset(functions[end_i - 1 :], progressions, [True] + functions_used_maps[end_i :])
@@ -134,14 +136,30 @@ class ChordsProgressionsCoverageCriteria(ChordsMatchCriteria):
         return best_used_map
                                 
 
-class RepetitionChorusCriteria(ChordsMatchCriteria):
+class RepetitionCriteria(ChordsMatchCriteria):
+    MIN_REPETITION = 4
+    def _find_repetition_mask(self, occupied_mask, tested_pairs):
+        best_repetition_mask = occupied_mask
+        for l in range(self.MIN_REPETITION, len(self.chords) // 2):
+            for i in range(0, len(self.chords) - self.MIN_REPETITION + 1):
+                reps_indexes = [i for i in find_all_sublist(self.chords, self.chords[i : i + l])
+                                if not any(occupied_mask[i : i + l]) and not (l, i, ) in tested_pairs]
+                if len(reps_indexes) <= 1:
+                    continue
+
+                cloned_mask = list(occupied_mask) # clone
+                for i in reps_indexes:
+                    cloned_mask = cloned_mask[: i] + [True] * l + cloned_mask[i + l :]
+                current_mask = self._find_repetition_mask(cloned_mask, tested_pairs + [(l, i, )])
+                if sum(current_mask) > sum(best_repetition_mask):
+                    best_repetition_mask = current_mask
+        
+        return best_repetition_mask
+    
     def calc_score(self):
-        # results = self.cp.analyse_diatonic(self.chords[-1], self.scale)
-        # if results:  # diatonic
-            # function = results[0][0].root  # just show roman notation
-            # if function == 'I':
-                # return 1
-        return 0
+        best_mask = self._find_repetition_mask([False] * len(self.chords), [])
+        score = sum(best_mask) / len(self.chords)
+        return score
     
 class ScaleMatch(object):
     def __init__(self, scale, chords, cp, criterias=None):
@@ -151,7 +169,8 @@ class ScaleMatch(object):
             DiatomicMatchCriteria(scale, chords, cp),
             FirstChordMatchCriteria(scale, chords, cp),
             LastChordMatchCriteria(scale, chords, cp),
-            ChordsProgressionsCoverageCriteria(scale, chords, cp)
+            ChordsProgressionsCoverageCriteria(scale, chords, cp),
+            RepetitionCriteria(scale, chords, cp)
         ]
         self.scale = scale
         self.chords = chords
@@ -222,8 +241,16 @@ class ScaleMatch(object):
 class SongsChords(object):
     def __init__(self, chords: list):
         self.cp = chordparser.Parser()
-        self._raw_chords = chords
-        self._chords = [self.cp.create_chord(c) for c in chords.split()]
+        self._dedup_raw_chords = self._remove_dupliate_chords(chords)
+        self._chords = [self.cp.create_chord(c) for c in self._dedup_raw_chords]
+
+    @classmethod
+    def _remove_dupliate_chords(cls, chords):
+        new_chords = [chords[0]]
+        for chord in chords:
+            if chord != new_chords[-1]:
+                new_chords.append(chord)
+        return new_chords
 
     def find_best_scale(self):
         # The scale will be major/minor depending on the type of the first note
@@ -237,7 +264,7 @@ class SongsChords(object):
 
 def test():
     # song = SongsChords('G B C Cm')
-    song = SongsChords('C G F C G Am F Dm Em Bdim C')
+    song = SongsChords('C C G F C G Am Am F C C G F C G Am Am F C C G F C C G Am Am F Dm Em Bdim C C'.split())
     best_scale = song.find_best_scale()
     print(f'best scale is {best_scale}')
 
