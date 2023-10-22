@@ -271,6 +271,9 @@ class SongsChords(object):
         best_scale, score = self._find_best_scale()
         other_criterias_score = sum([criteria_cls(best_scale, self.chords, self.cp).score for criteria_cls in self.CRITERIA_CLASSES])
         return best_scale, score + other_criterias_score
+    
+    def calc_score(self):
+        return self.find_best_scale()[1]
 
 def test():
     # song = SongsChords('G B C Cm')
