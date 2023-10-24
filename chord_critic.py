@@ -77,7 +77,9 @@ class FirstScoreCriteria(Criteria):
             if function == ('I' if self.scale.key.mode == 'major' else 'i'):
                 return 1
             if function == 'V':
-                return 0.5
+                second_function = self.cp.analyse_diatonic(self.chords[1], self.scale)
+                if second_function == ('I' if self.scale.key.mode == 'major' else 'i'):
+                    return 0.5
         return 0
     
 class LastScoreCriteria(Criteria):
@@ -251,6 +253,7 @@ class StructureCriteria(Criteria):
         repetition_coverage = RepetitionCoverageCriteria(self.scale, self.chords, self.cp)
         cpc = chord_progression_coverage.score
         rc = repetition_coverage.score
+        # print(f'cpc={cpc}, rc={rc}')
         arithmetic_avg = 0.5 * (cpc + rc)
         geometric_avg = np.sqrt(cpc * rc)
         result = 0.5 * (arithmetic_avg + geometric_avg)
@@ -302,8 +305,8 @@ class ChordsMetrics(object):
 
     
 def test():
-    metrics = ChordsMetrics('Em G D A Em G D A C G D Em C G D Em'.split())
-    # metrics = ChordsMetrics('C C G F C G Am Am F C C G F C G Am Am F C C G F C C G Am Am F Dm Em Bdim C C F# A'.split())
+    # metrics = ChordsMetrics('Em G D A Em G D A C G D Em C G D Em'.split())
+    metrics = ChordsMetrics('C G Am F C G Am F'.split())
     best_scale = metrics.best_scale_criteria.scale
     scores = metrics.scores
     print(f'best scale is {best_scale} with scores {scores}')
