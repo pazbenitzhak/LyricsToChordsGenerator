@@ -54,7 +54,7 @@ class InScaleCriteria(Criteria):
         score = matches_count / len(self.chords)
         return score
     
-class AdvancedScaleCriteria(Criteria):
+class BorrowedScaleCriteria(Criteria):
     """
     Percentage of chords that are borrowed chords in the diatonic scale
     """
@@ -74,7 +74,7 @@ class FirstScoreCriteria(Criteria):
         results = self.cp.analyse_diatonic(self.chords[0], self.scale)
         if results:  # diatonic
             function = results[0][0].root  # just show roman notation
-            if function == 'I':
+            if function == ('I' if self.scale.key.mode == 'major' else 'i'):
                 return 1
             if function == 'V':
                 return 0.5
@@ -85,7 +85,7 @@ class LastScoreCriteria(Criteria):
         results = self.cp.analyse_diatonic(self.chords[-1], self.scale)
         if results:  # diatonic
             function = results[0][0].root  # just show roman notation
-            if function == 'I':
+            if function == ('I' if self.scale.key.mode == 'major' else 'i'):
                 return 1
         return 0
 
@@ -105,10 +105,13 @@ class ChordsProgressionsCoverageCriteria(Criteria):
         ['I', 'IV', 'I', 'IV', 'I', 'V', 'VI', 'I', 'V'], # twelve bar blues variation
         ['IV', 'I', 'V', 'VI', 'I'], # twelve bar blues variation
         ['I', 'IV', 'I', 'V', 'I', 'vi', 'I' ,'V'], # twelve bar blues variation
+        ['I', 'IV', 'V'],
     ]
     
     NATURAL_MINOR_CHORDS_PROGRESSIONS = [
         ['i', 'VI', 'III', 'VII'], # 1564
+        ['i', 'III', 'VII', 'IV'], # Boulevards of broken dreams 1
+        ['VI', 'III', 'VII', 'i'] # Boulevards of broken dreams 2
     ]
 
     HARMONIC_MINOR_CHORDS_PROGRESSIONS = [
@@ -134,9 +137,12 @@ class ChordsProgressionsCoverageCriteria(Criteria):
         for chord in chords:
             f = cp.analyse_diatonic(chord, scale)
             if not f:
-                chords_functions.append('')
-            else:
-                chords_functions.append(f[0][0].root)
+                other_scale = cp.create_scale(scale.key.root, 'major' if scale.key.mode == 'minor' else 'minor')
+                f = cp.analyse_diatonic(chord, other_scale)
+                if not f:
+                    chords_functions.append('')
+                    continue
+            chords_functions.append(f[0][0].root)
         
         return chords_functions
 
@@ -155,12 +161,8 @@ class ChordsProgressionsCoverageCriteria(Criteria):
         
         for prog in progressions:
             for occurence_i in find_all_sublist(functions, prog):
-                end_i = occurence_i + len(prog)
-                best_first_map = self._calc_score_subset(functions[:occurence_i + 1], progressions, functions_used_maps[:occurence_i] + [True])
-                best_last_map = self._calc_score_subset(functions[end_i - 1 :], progressions, [True] + functions_used_maps[end_i :])
-                occurrence_used_map = best_first_map + ([True] * (len(prog) - 2)) + best_last_map
-                if sum(occurrence_used_map) > sum(best_used_map):
-                    best_used_map = occurrence_used_map
+                best_used_map = best_used_map[: occurence_i] + ([True] * len(prog)) + best_used_map[occurence_i + len(prog) :]
+            pass
         return best_used_map
                                 
 
@@ -195,8 +197,9 @@ class LocalScaleCriteria(Criteria):
         self.first_score = FirstScoreCriteria(self.scale, self.chords, self.cp).score
         self.last_score = LastScoreCriteria(self.scale, self.chords, self.cp).score
         self.inscale_score = InScaleCriteria(self.scale, self.chords, self.cp).score
-        self.advscale_score = AdvancedScaleCriteria(self.scale, self.chords, self.cp).score
-        total = self.first_score + self.last_score + (1.5 * self.inscale_score) + (0.5 * self.advscale_score) + 1
+        self.borscale_score = BorrowedScaleCriteria(self.scale, self.chords, self.cp).score
+        total = self.first_score + self.last_score + (1.5 * self.inscale_score) + (0.5 * self.borscale_score) + 1
+        # print(f'Testing scale {str(self.scale.key)}: {total}')
         return total
     
 
@@ -238,21 +241,33 @@ class ArtCriteria(Criteria):
     def calc_score(self):
         best_scale_criteria = self.best_scale_criteria
         in_scale = best_scale_criteria.inscale_score
-        adv_scale = best_scale_criteria.advscale_score
-        result = 2 * (adv_scale + 1) / (in_scale + 1)
+        bor_scale = best_scale_criteria.borscale_score
+        result = np.exp(bor_scale) / (np.exp(bor_scale) + np.exp(in_scale) + np.e)
         return result
 
 class StructureCriteria(Criteria):
     def calc_score(self):
         chord_progression_coverage = ChordsProgressionsCoverageCriteria(self.scale, self.chords, self.cp)
         repetition_coverage = RepetitionCoverageCriteria(self.scale, self.chords, self.cp)
-        return np.sqrt(chord_progression_coverage.score * repetition_coverage.score)
+        cpc = chord_progression_coverage.score
+        rc = repetition_coverage.score
+        arithmetic_avg = 0.5 * (cpc + rc)
+        geometric_avg = np.sqrt(cpc * rc)
+        result = 0.5 * (arithmetic_avg + geometric_avg)
+        return result
 
 class ChordsMetrics(object):
     def __init__(self, chords: list):
         self.cp = chordparser.Parser()
         self._dedup_raw_chords = self._remove_dupliate_chords(chords)
-        self.chords = [self.cp.create_chord(c) for c in self._dedup_raw_chords]
+        self.chords = []
+        for chord in self._dedup_raw_chords:
+            try:
+                self.chords.append(self.cp.create_chord(chord))
+            except Exception as e:
+                # print(f'Error: skipping chord {chord} - {e}')
+                pass
+        # self.chords = [self.cp.create_chord(c) for c in self._dedup_raw_chords]
         self._scale_criteria = ScaleCriteria(None, self.chords, self.cp)
         self._art_criteria = ArtCriteria(self.best_scale_criteria.scale, self.chords, self.cp, self.best_scale_criteria)
         self._structure_criteria = StructureCriteria(self.best_scale_criteria.scale, self.chords, self.cp)
@@ -287,8 +302,8 @@ class ChordsMetrics(object):
 
     
 def test():
-    # song = SongsChords('G B C Cm')
-    metrics = ChordsMetrics('C C G F C G Am Am F C C G F C G Am Am F C C G F C C G Am Am F Dm Em Bdim C C F# A'.split())
+    metrics = ChordsMetrics('Em G D A Em G D A C G D Em C G D Em'.split())
+    # metrics = ChordsMetrics('C C G F C G Am Am F C C G F C G Am Am F C C G F C C G Am Am F Dm Em Bdim C C F# A'.split())
     best_scale = metrics.best_scale_criteria.scale
     scores = metrics.scores
     print(f'best scale is {best_scale} with scores {scores}')
