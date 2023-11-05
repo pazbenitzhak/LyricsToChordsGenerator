@@ -79,7 +79,7 @@ class FirstScoreCriteria(Criteria):
             if function == 'V':
                 second_function = self.cp.analyse_diatonic(self.chords[1], self.scale)
                 if second_function == ('I' if self.scale.key.mode == 'major' else 'i'):
-                    return 0.5
+                    return 0.25
         return 0
     
 class LastScoreCriteria(Criteria):
@@ -108,6 +108,8 @@ class ChordsProgressionsCoverageCriteria(Criteria):
         ['IV', 'I', 'V', 'VI', 'I'], # twelve bar blues variation
         ['I', 'IV', 'I', 'V', 'I', 'vi', 'I' ,'V'], # twelve bar blues variation
         ['I', 'IV', 'V'],
+        ['I', 'vi', 'IV', 'V'], # common
+
     ]
     
     NATURAL_MINOR_CHORDS_PROGRESSIONS = [
@@ -200,7 +202,7 @@ class LocalScaleCriteria(Criteria):
         self.last_score = LastScoreCriteria(self.scale, self.chords, self.cp).score
         self.inscale_score = InScaleCriteria(self.scale, self.chords, self.cp).score
         self.borscale_score = BorrowedScaleCriteria(self.scale, self.chords, self.cp).score
-        total = self.first_score + self.last_score + (1.5 * self.inscale_score) + (0.5 * self.borscale_score) + 1
+        total = (self.first_score + self.last_score + (1.5 * self.inscale_score) + (0.5 * self.borscale_score) + 1) / 4.5
         # print(f'Testing scale {str(self.scale.key)}: {total}')
         return total
     
@@ -218,44 +220,65 @@ class ScaleCriteria(Criteria):
     
     def _get_all_scales_criteria(self):
         # The scale will be major/minor depending on the type of the first note
-        all_major_scales = [LocalScaleCriteria(self.cp.create_scale(root, 'major'), self.chords, self.cp)
+        all_major_criteria = [LocalScaleCriteria(self.cp.create_scale(root, 'major'), self.chords, self.cp)
                             for root in NOTE_TO_TOKEN.keys()]
-        all_minor_scales = [LocalScaleCriteria(self.cp.create_scale(root, 'minor'), self.chords, self.cp)
+        all_minor_criteria = [LocalScaleCriteria(self.cp.create_scale(root, 'minor'), self.chords, self.cp)
                             for root in NOTE_TO_TOKEN.keys()]
-        all_scales = all_major_scales + all_minor_scales
 
-        return all_scales
+        return all_major_criteria, all_minor_criteria
 
     def calc_score(self):
-        all_criterias = self._get_all_scales_criteria()
-        best_criteria = max(all_criterias, key=lambda c:c.score)
+        all_major_criteria, all_minor_criteria = self._get_all_scales_criteria()
+        best_major_criteria = max(all_major_criteria, key=lambda c:c.score)
+        best_minor_criteria = max(all_minor_criteria, key=lambda c:c.score)
+        if best_major_criteria >= best_minor_criteria:
+            all_criterias = all_major_criteria
+            best_criteria = best_major_criteria
+        else:
+            all_criterias = all_minor_criteria
+            best_criteria = best_minor_criteria
+        # print(f'best score: {best_criteria.score}')
         # Softmax
-        score = np.exp(best_criteria.score) / np.sum(np.exp([c.score for c in all_criterias]))
+        temperature = 0.1
+        score = np.exp(best_criteria.score / temperature) / np.sum(np.exp([c.score / temperature for c in all_criterias]))
+        S = len(all_criterias)
+        scaled_score = (score - (1 / S)) * S / (S - 1)
+        # print(f'score before scale={score}, after={scaled_score}')
         self._best_scale_criteria = best_criteria
-        return score
+        return scaled_score
         
 
 class ArtCriteria(Criteria):
-    def __init__(self, best_scale, chords, cp, best_scale_criteria):
+    def __init__(self, best_scale, chords, cp, best_scale_criteria, scale_criteria, structure_criteria):
         self.best_scale_criteria = best_scale_criteria
+        self.structure_criteria = structure_criteria
+        self.scale_criteria = scale_criteria
         super(ArtCriteria, self).__init__(best_scale, chords, cp)
 
     def calc_score(self):
-        best_scale_criteria = self.best_scale_criteria
-        in_scale = best_scale_criteria.inscale_score
-        bor_scale = best_scale_criteria.borscale_score
-        result = np.exp(bor_scale) / (np.exp(bor_scale) + np.exp(in_scale) + np.e)
+        center = 1
+        maxval = 2.5
+        prob099 = maxval
+        bor_coverage = self.best_scale_criteria.borscale_score
+        unknown_coverage = 1 - bor_coverage - self.best_scale_criteria.inscale_score
+        cpc_inv_criteria = 1 - self.structure_criteria.chord_progression_coverage.score
+        x = 2 * bor_coverage + unknown_coverage + 0.5 * cpc_inv_criteria
+        # print(f'art: bor={bor_coverage}, unk={unknown_coverage}, cpc_inv={cpc_inv_criteria}... x={x}')
+        def mysigmoid(x):
+            return 1 / (1 + np.exp((x - center) * np.log(0.01 / 0.99) / (prob099 - center)))
+        result = (mysigmoid(x) - mysigmoid(0)) / (mysigmoid(maxval) - mysigmoid(0))
         return result
 
 class StructureCriteria(Criteria):
     def calc_score(self):
-        chord_progression_coverage = ChordsProgressionsCoverageCriteria(self.scale, self.chords, self.cp)
-        repetition_coverage = RepetitionCoverageCriteria(self.scale, self.chords, self.cp)
-        cpc = chord_progression_coverage.score
-        rc = repetition_coverage.score
+        self.chord_progression_coverage = ChordsProgressionsCoverageCriteria(self.scale, self.chords, self.cp)
+        self.repetition_coverage = RepetitionCoverageCriteria(self.scale, self.chords, self.cp)
+        cpc = self.chord_progression_coverage.score
+        rc = self.repetition_coverage.score
         # print(f'cpc={cpc}, rc={rc}')
-        arithmetic_avg = 0.5 * (cpc + rc)
-        geometric_avg = np.sqrt(cpc * rc)
+        arithmetic_avg = 3 / 4 * cpc + rc / 4
+        geometric_avg = arithmetic_avg
+        # geometric_avg = (cpc ** 0.75) * (rc ** 0.25)
         result = 0.5 * (arithmetic_avg + geometric_avg)
         return result
 
@@ -272,8 +295,8 @@ class ChordsMetrics(object):
                 pass
         # self.chords = [self.cp.create_chord(c) for c in self._dedup_raw_chords]
         self._scale_criteria = ScaleCriteria(None, self.chords, self.cp)
-        self._art_criteria = ArtCriteria(self.best_scale_criteria.scale, self.chords, self.cp, self.best_scale_criteria)
         self._structure_criteria = StructureCriteria(self.best_scale_criteria.scale, self.chords, self.cp)
+        self._art_criteria = ArtCriteria(self.best_scale_criteria.scale, self.chords, self.cp, self.best_scale_criteria, self._scale_criteria, self._structure_criteria)
 
     @classmethod
     def _remove_dupliate_chords(cls, chords):
